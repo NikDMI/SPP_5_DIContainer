@@ -23,7 +23,7 @@ namespace DIContainer.Configuration
             bool isImplemented = false;
             foreach (var interfaceType in instanceImplementation.GetInterfaces())
             {
-                if (interfaceType.Equals(instanceImplementation))
+                if (interfaceType.Equals(instanceInterface))
                 {
                     isImplemented = true;
                     break;
@@ -31,7 +31,10 @@ namespace DIContainer.Configuration
             }
             if (!isImplemented)
             {
-                throw new ArgumentException("Interface wasn't implemented");
+                if (!instanceInterface.IsGenericType || instanceInterface.IsConstructedGenericType)
+                {
+                    throw new ArgumentException("Interface wasn't implemented");
+                }
             }
             //Register dependency
             if (!instanceInterface.IsGenericType || instanceInterface.IsConstructedGenericType) //Register close type
@@ -82,7 +85,7 @@ namespace DIContainer.Configuration
         }
 
 
-        public IConfiguration MakeDeepCopy()
+        ICloneableConfig ICloneableConfig.MakeDeepCopy()
         {
             DependenciesCongifuration copyConfig = (DependenciesCongifuration)this.MemberwiseClone();
             //Create copy of dictionaries
@@ -104,7 +107,7 @@ namespace DIContainer.Configuration
 
         public IEnumerable<object> GetDependency(Type interfaceType, bool onlyFirstDependency = true)
         {
-            List<Type> dependencyType = null;
+            List<object> dependencyObjects = new List<object>();
             List<DependencyInfo> dependenciesList = null;
             //Search in closed types
             _closedTypes.TryGetValue(interfaceType, out dependenciesList);
@@ -132,9 +135,19 @@ namespace DIContainer.Configuration
             //Create instances
             if (dependenciesList != null)
             {
-
+                if (onlyFirstDependency)
+                {
+                    dependencyObjects.Add(CreateDependencyInstance(interfaceType, dependenciesList[0]));
+                }
+                else
+                {
+                    foreach(var dependencyInfo in dependenciesList)
+                    {
+                        dependencyObjects.Add(CreateDependencyInstance(interfaceType, dependencyInfo));
+                    }
+                }
             }
-            return dependencyType;
+            return dependencyObjects;
         }
 
 
@@ -156,8 +169,38 @@ namespace DIContainer.Configuration
                     return dependencyObject;
                 }
             }
-            //Create new object
+            //Create new object (from first suitable public constructor)
             var publicConstructurs = dependencyType.GetConstructors();
+            foreach (var constructor in publicConstructurs)
+            {
+                var constructorParameterTypes = constructor.GetParameters();
+                List<object> constructorParameters = new List<object>();
+                //Create parameters for constructor
+                foreach (var parameterType in constructorParameterTypes)
+                {
+                    if (parameterType.ParameterType.IsValueType)//can't init value types
+                    {
+                        break;
+                    }
+                    var paramDependency = GetDependency(parameterType.ParameterType);
+                    if (paramDependency == null)
+                    {
+                        break;
+                    }
+                    constructorParameters.Add(paramDependency);
+                }
+                //Create object if all constructor params was init
+                if (constructorParameters.Count == constructorParameterTypes.Length)
+                {
+                    dependencyObject = constructor.Invoke(constructorParameters.ToArray());
+                    break;
+                }
+            }
+            //Update singelton table
+            if (dependencyObject != null && dependencyInfo.lifePeriod == IConfiguration.LifePeriod.SINGELTON)
+            {
+                _singeltonsObjects.Add(dependencyType, dependencyObject);
+            }
             return dependencyObject;
         }
 
@@ -175,12 +218,13 @@ namespace DIContainer.Configuration
         }
 
 
-        
 
 
-        private Dictionary<Type, List<DependencyInfo>> _closedTypes;  //correspondene between closed types
+        //correspondene between closed types
+        private Dictionary<Type, List<DependencyInfo>> _closedTypes = new Dictionary<Type, List<DependencyInfo>>();
 
-        private Dictionary<Type, List<DependencyInfo>> _openGenericTypes; //correspondence for open generics like List<>
+        //correspondence for open generics like List<>
+        private Dictionary<Type, List<DependencyInfo>> _openGenericTypes = new Dictionary<Type, List<DependencyInfo>>(); 
 
         private Dictionary<Type, object> _singeltonsObjects = new Dictionary<Type, object>();
     }
