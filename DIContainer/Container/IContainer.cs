@@ -9,5 +9,6 @@ namespace DIContainer.Container
     /// </summary>
     public interface IContainer
     {
+        public TInterface Resolve<TInterface>() where TInterface : class;
     }
 }
